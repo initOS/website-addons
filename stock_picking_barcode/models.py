@@ -59,28 +59,42 @@ class StockPicking(models.Model):
                         )
             if not op_id:  # lot not on picking. replace with scanned one
                 pack_lot = self.env['stock.pack.operation.lot'].search([
-                    ('lot_id', '=', lot.id)])
+                    ('lot_id', '=', lot.id),
+                    ('qty', '=', 0),
+                    ('operation_id', '!=', False),
+                ])
+                available_pack_ops = self.env['stock.pack.operation'].search([
+                    ('picking_id', '=', self[0].id),
+                    ('product_id', '=', lot.product_id.id),
+                ])
                 if not pack_lot:
                     # there is no stock.pack.operation.lot for this lot.
                     # search for a stock.pack.operation.lot to replace.
-                    available_pack_ops = self.env['stock.pack.operation'].search([
-                        ('picking_id', '=', self[0].id),
-                        ('product_id', '=', lot.product_id.id),
-                    ])
                     for pack_op in available_pack_ops:
                         for pack_lot in pack_op.pack_lot_ids:
-                            if pack_lot.qty == 0:
+                            if pack_lot.qty == 0 and not op_id:
                                 pack_lot.unlink()
                                 pack_lot = self.env['stock.pack.operation.lot'].create({
                                     'lot_id': lot.id,
                                     'operation_id': pack_op.id,
+                                    'qty_todo': 1,
+                                    'qty': 0,
                                 })
                                 op_id = pack_op
                                 pack_op.qty_done += 1
                                 pack_lot.qty += 1
+                    if not op_id:
+                        op_id = self.env['stock.pack.operation']
                 else:
-                    # there is a stock.pack.opertation.lot. so swap lot ids
-                    pass
+                    for pack_op in available_pack_ops:
+                        for pack_lot_self in pack_op.pack_lot_ids:
+                            if pack_lot_self.qty == 0:
+                                op = pack_lot.operation_id
+                                pack_lot.operation_id = pack_op.id
+                                pack_lot_self.operation_id = op.id
+                                op_id = pack_op
+                                pack_op.qty_done += 1
+                                pack_lot_self.qty += 1
             answer['operation_id'] = op_id.id
             return answer
         # check if the barcode correspond to a package
