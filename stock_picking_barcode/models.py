@@ -44,12 +44,12 @@ class StockPicking(models.Model):
         matching_lot_ids = lot_obj.search([('name', '=', barcode_str)])
         if matching_lot_ids:
             lot = lot_obj.browse(matching_lot_ids[0].id)
-            op_id = False
+            op_id = self.env['stock.pack.operation']
             linked_pack_lots = self.env['stock.pack.operation.lot']
             for po in self.pack_operation_ids:
                 for pol in po.pack_lot_ids:
                     linked_pack_lots += pol
-                    if pol.lot_id.id == lot.id:
+                    if pol.lot_id.id == lot.id and pol.qty == 0 and pol.operation_id:
                         op_id = pack_op._increment(
                             self.id,
                             [('product_id', '=', lot.product_id.id), ('pack_lot_ids.lot_id', '=', lot.id)],
@@ -60,7 +60,7 @@ class StockPicking(models.Model):
             if not op_id:  # lot not on picking. replace with scanned one
                 pack_lot = self.env['stock.pack.operation.lot'].search([
                     ('lot_id', '=', lot.id),
-                    ('qty', '=', 0),
+                    # ('qty', '=', 0),
                     ('operation_id', '!=', False),
                 ])
                 available_pack_ops = self.env['stock.pack.operation'].search([
@@ -83,18 +83,16 @@ class StockPicking(models.Model):
                                 op_id = pack_op
                                 pack_op.qty_done += 1
                                 pack_lot.qty += 1
-                    if not op_id:
-                        op_id = self.env['stock.pack.operation']
                 else:
                     for pack_op in available_pack_ops:
                         for pack_lot_self in pack_op.pack_lot_ids:
-                            if pack_lot_self.qty == 0:
+                            if pack_lot_self.qty == 0 and pack_lot.qty == 0 and not op_id:
                                 op = pack_lot.operation_id
                                 pack_lot.operation_id = pack_op.id
                                 pack_lot_self.operation_id = op.id
                                 op_id = pack_op
                                 pack_op.qty_done += 1
-                                pack_lot_self.qty += 1
+                                pack_lot.qty += 1  # this one is our new operation lot
             answer['operation_id'] = op_id.id
             return answer
         # check if the barcode correspond to a package
@@ -256,24 +254,36 @@ class StockPackOperation(models.Model):
                 # existing operation found for the given domain and picking => increment its quantity
                 op_obj = todo_operation_ids[0]
                 # when op_object has a lot
-                for pack_lot in op_obj.pack_lot_ids:
-                    if pack_lot.lot_id.id == domain[1][2] and pack_lot.lot_id.product_id.id == domain[0][2] and pack_lot.qty == 0:
-                        qty = op_obj.qty_done
-                        qty_pack_lot = pack_lot.qty
-                        if increment:
-                            qty += 1
-                            qty_pack_lot += 1
-                        else:
-                            qty -= 1 if qty >= 1 else 0
-                            qty_pack_lot -= 1 if qty >= 1 else 0
-                            if qty == 0 and op_obj.product_qty == 0:
-                                # we have a line with 0 qty set, so delete it
-                                operation.unlink([op_obj.id])
-                                return False
-                        op_obj.write({'qty_done': qty})
-                        pack_lot.write({'qty': qty_pack_lot})
-                        return op_obj
-                return self.env['stock.pack.operation']
+                if op_obj.pack_lot_ids:
+                    for pack_lot in op_obj.pack_lot_ids:
+                        if pack_lot.lot_id.id == domain[1][2] and pack_lot.lot_id.product_id.id == domain[0][2] and pack_lot.qty == 0:
+                            qty = op_obj.qty_done
+                            qty_pack_lot = pack_lot.qty
+                            if increment:
+                                qty += 1
+                                qty_pack_lot += 1
+                            else:
+                                qty -= 1 if qty >= 1 else 0
+                                qty_pack_lot -= 1 if qty >= 1 else 0
+                                if qty == 0 and op_obj.product_qty == 0:
+                                    # we have a line with 0 qty set, so delete it
+                                    operation.unlink([op_obj.id])
+                                    return False
+                            op_obj.write({'qty_done': qty})
+                            pack_lot.write({'qty': qty_pack_lot})
+                            return op_obj
+                elif op_obj.product_id.id == domain[0][2]:
+                    qty = op_obj.qty_done
+                    if increment:
+                        qty += 1
+                    else:
+                        qty -= 1 if qty >= 1 else 0
+                        if qty == 0 and op_obj.product_qty == 0:
+                            # we have a line with 0 qty set, so delete it
+                            operation.unlink([op_obj.id])
+                            return False
+                    op_obj.write({'qty_done': qty})
+                    return op_obj
             else:
                 # no existing operation found for the given domain and picking => create a new one
                 picking_obj = operation.env["stock.picking"]
@@ -298,7 +308,7 @@ class StockPackOperation(models.Model):
                         update_dict['product_uom_id'] = uom_id
                     values.update(update_dict)
                 op_obj = operation.create(values)
-
+        return self.env['stock.pack.operation']
 
     @api.multi
     def create_and_assign_lot(self, name):
