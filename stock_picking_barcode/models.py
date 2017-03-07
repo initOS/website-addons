@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from odoo import models, api
+from odoo.exceptions import UserError
 from odoo.tools.float_utils import float_compare
 
 
@@ -58,10 +59,24 @@ class StockPicking(models.Model):
                             increment=True
                         )
             if not op_id:  # lot not on picking. replace with scanned one
+                quant = self.env['stock.quant'].search([('lot_id', '=', lot.id)])
+                if len(quant) == 0:
+                    raise UserError('No Quant found for S/N: %s' % lot.name)
+                if len(quant) > 1:
+                    msg = 'Multiple Quants found for S/N: %s, Quants %s'
+                    vals = (lot.name, str(quant))
+                    raise UserError(msg % vals)
+                if quant.location_id != self.location_id:
+                    raise UserError(
+                        'The scanned product is stored in an unexpected '
+                        'location. Expected: %s but is %s' %
+                        (self.location_id.name, quant.location_id.name))
                 pack_lot = self.env['stock.pack.operation.lot'].search([
                     ('lot_id', '=', lot.id),
                     # ('qty', '=', 0),
                     ('operation_id', '!=', False),
+                    # we are not interested in done pickings
+                    ('operation_id.picking_id.state', '=', 'assigned'),
                 ])
                 available_pack_ops = self.env['stock.pack.operation'].search([
                     ('picking_id', '=', self[0].id),
@@ -186,12 +201,13 @@ class StockPicking(models.Model):
                 )
         return package_id
 
+    @api.multi
     def action_done_from_ui(self, picking_id):
         """ called when button 'done' is pushed in the barcode scanner UI """
         # write qty_done into field product_qty for every package_operation before doing the transfer
-        for operation in self.pack_operation_ids:
-            operation.with_context(no_recompute=True).write({'product_qty': operation.qty_done})
-        self.do_transfer()
+        # for operation in self.pack_operation_ids:
+        #     operation.with_context(no_recompute=True).write({'product_qty': operation.qty_done})
+        self.do_new_transfer()
         # return id of next picking to work on
         return self.get_next_picking_for_ui()
 
@@ -273,6 +289,7 @@ class StockPackOperation(models.Model):
                         op_obj.write({'qty_done': qty})
                         pack_lot.write({'qty': qty_pack_lot})
                         return op_obj
+            # operation with no-lot-product
             elif op_obj.product_id.id == domain[0][2]:
                 qty = op_obj.qty_done
                 if increment:
