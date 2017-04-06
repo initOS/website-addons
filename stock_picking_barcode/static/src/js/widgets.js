@@ -103,7 +103,7 @@ odoo.define('stock_picking_barcode.widgets', function (require) {
                     var op_lot = model.op_lots_index[id];
                     return op_lot.lot_name || op_lot.lot_id[1];
                 });
-                lots = lots.join(',');
+                lots = lots.join(', ');
 
 
                         self.rows.push({
