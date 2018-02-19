@@ -59,18 +59,28 @@ class StockPicking(models.Model):
                             increment=True
                         )
             if not op_id:  # lot not on picking. replace with scanned one
-                quant = self.env['stock.quant'].search([('lot_id', '=', lot.id)])
-                if len(quant) == 0:
-                    raise UserError('No Quant found for S/N: %s' % lot.name)
+                # Actually Odoo allow multiple occurrences of one lot number in different stock locations.
+                # That's why we use a precise search first.
+                quant = self.env['stock.quant'].search([('lot_id', '=', lot.id),
+                                                        ('location_id', '=', self.location_id.id)])
                 if len(quant) > 1:
-                    msg = 'Multiple Quants found for S/N: %s, Quants %s'
-                    vals = (lot.name, str(quant))
+                    msg = 'Multiple Quants found for S/N in stock location: S/N %s, Quants %s, Location %s'
+                    vals = (lot.name, str(quant), self.location_id.name)
                     raise UserError(msg % vals)
-                if quant.location_id != self.location_id:
-                    raise UserError(
-                        'The scanned product is stored in an unexpected '
-                        'location. Expected: %s but is %s' %
-                        (self.location_id.name, quant.location_id.name))
+                if len(quant) == 0:
+                    # Try softer search to give a hint to the user.
+                    quant = self.env['stock.quant'].search([('lot_id', '=', lot.id)])
+                    if len(quant) == 0:
+                        raise UserError('No Quant found for S/N: %s' % lot.name)
+                    if len(quant) > 1:
+                        msg = 'Multiple Quants found for S/N in other stock location(s): S/N %s, Quants %s'
+                        vals = (lot.name, str(quant))
+                        raise UserError(msg % vals)
+                    if quant.location_id != self.location_id:
+                        raise UserError(
+                            'The scanned product is stored in an unexpected '
+                            'location. Expected: %s but is %s' %
+                            (self.location_id.name, quant.location_id.name))
                 pack_lot = self.env['stock.pack.operation.lot'].search([
                     ('lot_id', '=', lot.id),
                     # ('qty', '=', 0),
