@@ -77,10 +77,7 @@ class StockPicking(models.Model):
                         vals = (lot.name, str(quant))
                         raise UserError(msg % vals)
                     if quant.location_id != self.location_id:
-                        raise UserError(
-                            'The scanned product is stored in an unexpected '
-                            'location. Expected: %s but is %s' %
-                            (self.location_id.name, quant.location_id.name))
+                        self.fix_wrong_location(quant)
                 pack_lot = self.env['stock.pack.operation.lot'].search([
                     ('lot_id', '=', lot.id),
                     # ('qty', '=', 0),
@@ -133,6 +130,12 @@ class StockPicking(models.Model):
             answer['operation_id'] = op_id.id
             return answer
         return answer
+
+    def fix_wrong_location(self, quant):
+        raise UserError(
+            'The scanned product is stored in an unexpected '
+            'location. Expected: %s but is %s' %
+            (self.location_id.name, quant.location_id.name))
 
     def get_next_picking_for_ui(self):
         """ returns the next pickings to process. Used in the barcode scanner UI"""
