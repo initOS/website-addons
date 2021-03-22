@@ -15,7 +15,6 @@ class StockPicking(models.Model):
         lot_obj = self.env['stock.production.lot']
         package_obj = self.env['stock.quant.package']
         product_obj = self.env['product.product']
-        stock_operation_obj = self.env['stock.pack.operation']
         pack_op = self.env['stock.pack.operation'].search(
             [('picking_id', '=', self.id)])
         stock_location_obj = self.env['stock.location']
@@ -77,7 +76,19 @@ class StockPicking(models.Model):
                         vals = (lot.name, str(quant))
                         raise UserError(msg % vals)
                     if quant.location_id != self.location_id:
+
                         self.fix_wrong_location(quant)
+                        if not self.should_replace():  # instead of replace we will add a new line
+                            op_id = pack_op._increment(
+                                self.id,
+                                [("product_id", "=", lot.product_id.id),
+                                 ("pack_lot_ids.lot_id", "=", lot.id)],
+                                filter_visible=True,
+                                visible_op_ids=visible_op_ids,
+                                increment=True,
+                            )
+                            answer["operation_id"] = op_id.id
+                            return answer
                 pack_lot = self.env['stock.pack.operation.lot'].search([
                     ('lot_id', '=', lot.id),
                     # ('qty', '=', 0),
@@ -131,6 +142,11 @@ class StockPicking(models.Model):
             return answer
         return answer
 
+    @api.multi
+    def should_replace(self):
+        return False
+
+    @api.multi
     def fix_wrong_location(self, quant):
         raise UserError(
             'The scanned product is stored in an unexpected '
