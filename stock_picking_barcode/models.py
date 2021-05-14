@@ -57,7 +57,10 @@ class StockPicking(models.Model):
                             visible_op_ids=visible_op_ids,
                             increment=True
                         )
-            if not op_id:  # lot not on picking. replace with scanned one
+                    # lot is already on picking and qty is 1. so nothing to do
+                    elif pol.lot_id.id == lot.id and pol.qty == 1 and pol.operation_id:
+                        return pol.operation_id.id
+            if not op_id and self.should_replace():  # lot not on picking. replace with scanned one
                 # Actually Odoo allow multiple occurrences of one lot number in different stock locations.
                 # That's why we use a precise search first.
                 quant = self.env['stock.quant'].search([('lot_id', '=', lot.id),
@@ -103,6 +106,7 @@ class StockPicking(models.Model):
                 if not pack_lot:
                     # there is no stock.pack.operation.lot for this lot.
                     # search for a stock.pack.operation.lot to replace.
+                    replaced = False
                     for pack_op in available_pack_ops:
                         for pack_lot in pack_op.pack_lot_ids:
                             if pack_lot.qty == 0 and not op_id:
@@ -116,6 +120,11 @@ class StockPicking(models.Model):
                                 op_id = pack_op
                                 pack_op.qty_done += 1
                                 pack_lot.qty += 1
+                                replaced = True
+                    if not replaced:
+                        # Its a lot product so qty == 1
+                        op_id = self.add_to_picking(barcode_str, 1, self)
+                        op_id.qty_done += 1
                 else:
                     for pack_op in available_pack_ops:
                         for pack_lot_self in pack_op.pack_lot_ids:
@@ -126,6 +135,12 @@ class StockPicking(models.Model):
                                 op_id = pack_op
                                 pack_op.qty_done += 1
                                 pack_lot.qty += 1  # this one is our new operation lot
+            # In case Product is on picking but lot not and we must not replace
+            elif not op_id and not self.should_replace():
+                op_id = self.add_to_picking(barcode_str, 1, self)
+                op_id.qty_done += 1
+                # picking sets itself to draft. so we need to confirm it again
+                self.action_confirm()
             answer['operation_id'] = op_id.id
             return answer
         # check if the barcode correspond to a package
@@ -141,6 +156,100 @@ class StockPicking(models.Model):
             answer['operation_id'] = op_id.id
             return answer
         return answer
+
+    @api.model
+    def add_to_picking(self, barcode, qty, picking):
+        self.ensure_one()
+        company = self.env.ref("base.main_company")
+
+        # barcode belongs to product
+        res = self.get_product_by_barcode(barcode)
+        if res:
+            self.env["stock.move"].create({
+                "product_uom": res.uom_id.id,
+                "company_id": company.id,
+                "location_id": self.location_id.id,
+                "location_dest_id": self.location_dest_id.id,
+                "product_id": res.id,
+                "name": res.name,
+                "picking_id": picking.id,
+                "product_uom_qty": qty,
+            })
+            return True
+
+        # barcode belongs to lot
+        res = self.get_lot_by_barcode(barcode)
+        if res:
+            quant = res.quant_ids
+            if qty != 1:
+                raise UserError(
+                    u"Für Seriennummern ist nur die Menge 1 zulässig. Bitte "
+                    u"beachten Sie, dass Zeilen mit gleichem Barcode für die "
+                    u"Verarbeitung zusammengezogen werden. "
+                    u"Angegebene Menge: %s, Barcode: %s" % (qty, barcode))
+            if len(quant) != 1:
+                raise UserError(
+                    u"Der Bestand für die Seriennummer ist fehlerhaft. Zu "
+                    u"jeder Seriennummer muss es genau ein Produkt geben. "
+                    u"Seriennummer: %s, Menge: %s" % (barcode, len(quant)))
+            if quant.location_id != self.location_id:
+                picking.fix_wrong_location(quant, create_pack_ops=True,
+                                           from_csv=True)
+
+            # one move per lot? Should also be possible to raise the qty of
+            # the move and handle additional lot with pack operations
+            move = self.env["stock.move"].create({
+                "product_uom": quant.product_id.uom_id.id,
+                "company_id": company.id,
+                # quant should be at right location from fix location function
+                "location_id": self.location_id.id,
+                "location_dest_id": self.location_dest_id.id,
+                "product_id": quant.product_id.id,
+                "name": quant.product_id.name,
+                "picking_id": picking.id,
+                "product_uom_qty": qty,
+            })
+            pack_op = self.env["stock.pack.operation"].create({
+                "location_id": move.location_id.id,
+                "location_dest_id": move.location_dest_id.id,
+                "picking_id": picking.id,
+                "product_id": quant.product_id.id,
+                "product_qty": qty,
+                "product_uom_id": move.product_uom.id,
+            })
+            self.env["stock.pack.operation.lot"].create({
+                "lot_id": quant.lot_id.id,
+                "qty_todo": qty,
+                "operation_id": pack_op.id
+            })
+            self.env["stock.move.operation.link"].create({
+                "move_id": move.id,
+                "operation_id": pack_op.id,
+                "qty": qty
+            })
+
+            return pack_op
+
+        # barcode doesn't belong to Odoo. we will collect unknown barcodes.
+        # so just return failure
+        return False
+
+    @api.model
+    def get_product_by_barcode(self, barcode):
+        res = self.env["product.product"].search([("barcode", "=", barcode)])
+        if len(res) > 1:
+            raise UserError(u"Zu dem Barcode gibt es mehrere Produkte. Dies "
+                            u"ist nicht zulässig! barcode: %s" % barcode)
+        return res
+
+    @api.model
+    def get_lot_by_barcode(self, barcode):
+        res = self.env["stock.production.lot"].search([
+            ("name", "=", barcode)])
+        if len(res) > 1:
+            raise UserError(u"Zu dem Barcode gibt es mehrere Seriennummern. "
+                            u"Dies ist nicht zulässig! barcode: %s" % barcode)
+        return res
 
     @api.multi
     def should_replace(self):
