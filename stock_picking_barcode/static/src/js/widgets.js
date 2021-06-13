@@ -161,6 +161,7 @@ odoo.define('stock_picking_barcode.widgets', function (require) {
             this.$('.oe_searchbox').keyup(function(event){
                 self.on_searchbox($(this).val());
             });
+            this.$('.js_book_picking').click(function(){ self.getParent().book_picking(); });
             this.$('.js_putinpack').click(function(){ self.getParent().pack(); });
             this.$('.js_drop_down').click(function(){ self.getParent().drop_down();});
             this.$('.js_clear_search').click(function(){
@@ -917,6 +918,16 @@ odoo.define('stock_picking_barcode.widgets', function (require) {
                 .call('process_product_id_from_ui', [self.picking.id, product_id, op_id, increment])
                 .then(function(result){
                     return self.refresh_ui(self.picking.id);
+                });
+        },
+        book_picking: function(){
+            var self = this;
+            return new Model('stock.picking')
+                .call('book_picking', [[self.picking.id]])
+                .then(function(result){
+                    // TODO: on success go back to picking
+                    // TODO: on error show error msg
+                    console.log(result);
                 });
         },
         pack: function(){

@@ -9,6 +9,15 @@ class StockPicking(models.Model):
     _inherit = "stock.picking"
 
     @api.multi
+    def book_picking(self):
+        # TODO: book picking. put zero qty on backorder and cancel backorder
+        return {
+            "success": True,
+            "msg": "Test",
+            "picking_id": self.id,
+        }
+
+    @api.multi
     def process_barcode_from_ui(self, barcode_str, visible_op_ids):
         """This function is called each time there barcode scanner reads an input"""
         self.ensure_one()
