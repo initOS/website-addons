@@ -2,20 +2,41 @@
 
 from odoo import models, api
 from odoo.exceptions import UserError
-from odoo.tools.float_utils import float_compare
+import logging
+
+_logger = logging.getLogger(__name__)
 
 
 class StockPicking(models.Model):
     _inherit = "stock.picking"
 
     @api.multi
-    def book_picking(self):
+    def book_picking_from_ui(self):
         # TODO: book picking. put zero qty on backorder and cancel backorder
-        return {
-            "success": True,
-            "msg": "Test",
-            "picking_id": self.id,
-        }
+        _logger.debug("Booking picking from UI. picking_id = %s, state "
+                      "= %s" % (self.id, self.state))
+        res = {"success": True}
+        try:
+            # this code also will be triggered when validating via backend and
+            # choosing to create a backorder
+            operations_to_delete = self.pack_operation_ids.filtered(
+                lambda o: o.qty_done <= 0)
+            for pack in self.pack_operation_ids - operations_to_delete:
+                pack.product_qty = pack.qty_done
+            operations_to_delete.unlink()
+            self.do_transfer()
+            # the backorder is not returned, so we need to find it for
+            # cancellation
+            bo = self.env["stock.picking"].search([
+                ("backorder_id", "=", self.id)])
+            bo.action_cancel()
+        except Exception as e:
+            _logger.exception(e)
+            res = {
+                "success": False,
+                "msg": str(e)
+            }
+        return res
 
     @api.multi
     def process_barcode_from_ui(self, barcode_str, visible_op_ids):

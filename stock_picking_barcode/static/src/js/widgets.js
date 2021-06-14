@@ -162,7 +162,9 @@ odoo.define('stock_picking_barcode.widgets', function (require) {
                 self.on_searchbox($(this).val());
             });
             this.$('.js_book_picking').click(function(){ self.getParent().book_picking(); });
-            this.$('.js_putinpack').click(function(){ self.getParent().pack(); });
+            // Don't add listener for our customer
+            //this.$('.js_putinpack').click(function(){ self.getParent().pack(); });
+            this.$('.js_putinpack').addClass('hidden');
             this.$('.js_drop_down').click(function(){ self.getParent().drop_down();});
             this.$('.js_clear_search').click(function(){
                 self.on_searchbox('');
@@ -179,12 +181,16 @@ odoo.define('stock_picking_barcode.widgets', function (require) {
                 if (selection === "ToDo"){
                     self.getParent().$('.js_pick_pack').removeClass('hidden');
                     self.getParent().$('.js_drop_down').removeClass('hidden');
+                    // hide put in cart button
+                    self.getParent().$('.js_putinpack').addClass('hidden');
                     self.$('.js_pack_op_line.processed').addClass('hidden');
                     self.$('.js_pack_op_line:not(.processed)').removeClass('hidden');
                 }
                 else{
                     self.getParent().$('.js_pick_pack').addClass('hidden');
                     self.getParent().$('.js_drop_down').addClass('hidden');
+                    // hide put in cart button
+                    self.getParent().$('.js_putinpack').addClass('hidden');
                     self.$('.js_pack_op_line.processed').removeClass('hidden');
                     self.$('.js_pack_op_line:not(.processed)').addClass('hidden');
                 }
@@ -659,7 +665,6 @@ odoo.define('stock_picking_barcode.widgets', function (require) {
             }
 
         },
-
         // load the picking data from the server. If picking_id is undefined, it will take the first picking
         // belonging to the category
         load: function(picking_id){
@@ -797,7 +802,7 @@ odoo.define('stock_picking_barcode.widgets', function (require) {
             $.when(this.loaded).done(function(){
                 self.picking_editor = new PickingEditorWidget(self);
                 self.picking_editor.replace(self.$('.oe_placeholder_picking_editor'));
-
+                self.getParent().$('.js_putinpack').addClass('hidden');
                 if( self.picking.id === self.pickings[0]){
                     self.$('.js_pick_prev').addClass('disabled');
                 }else{
@@ -841,6 +846,7 @@ odoo.define('stock_picking_barcode.widgets', function (require) {
                 .then(function(){
                     self.picking_editor.remove_blink();
                     self.picking_editor.renderElement();
+                    self.getParent().$('.js_putinpack').addClass('hidden');
                     if (!self.show_pack){
                         self.$('.js_pick_pack').addClass('hidden');
                     }
@@ -923,11 +929,14 @@ odoo.define('stock_picking_barcode.widgets', function (require) {
         book_picking: function(){
             var self = this;
             return new Model('stock.picking')
-                .call('book_picking', [[self.picking.id]])
+                .call('book_picking_from_ui', [[self.picking.id]])
                 .then(function(result){
-                    // TODO: on success go back to picking
-                    // TODO: on error show error msg
-                    console.log(result);
+                    if (result.success) {
+                        self.quit(self.picking.id);
+                    }
+                    else {
+                        // TODO: how to show error to user
+                    }
                 });
         },
         pack: function(){
@@ -1065,11 +1074,19 @@ odoo.define('stock_picking_barcode.widgets', function (require) {
                     self.refresh_ui(self.picking.id);
                 });
         },
-        quit: function(){
-            this.destroy();
-            return new Model("ir.model.data").call("search_read", [[['name', '=', 'stock_picking_type_action']], ['res_id']]).then(function(res) {
+        quit: function(picking_id){
+            var self = this;
+            self.picking_id_from_ui = picking_id;
+            if (picking_id) {
+                return new Model("ir.model.data").call("search_read", [[['name', '=', 'action_picking_tree_all']], ['res_id']]).then(function(res) {
+                    window.location = '/web#id=' + self.picking_id_from_ui + '&view_type=form&model=stock.picking&menu_id=170&action=' + res[0].res_id;
+                });
+            } else {
+                return new Model("ir.model.data").call("search_read", [[['name', '=', 'stock_picking_type_action']], ['res_id']]).then(function(res) {
                     window.location = '/web#action=' + res[0].res_id;
                 });
+            }
+
         },
         destroy: function(){
             this._super();
